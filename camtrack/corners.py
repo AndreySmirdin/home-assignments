@@ -17,6 +17,7 @@ import pims
 
 from _corners import FrameCorners, CornerStorage, StorageImpl
 from _corners import dump, load, draw, without_short_tracks, create_cli
+from scipy.spatial.distance import cdist
 
 
 class _CornerStorageBuilder:
@@ -34,17 +35,63 @@ class _CornerStorageBuilder:
         return StorageImpl(item[1] for item in sorted(self._corners.items()))
 
 
+def _float2uint8(img):
+    return np.round(img * 255).astype('uint8')
+
+
 def _build_impl(frame_sequence: pims.FramesSequence,
                 builder: _CornerStorageBuilder) -> None:
     image_0 = frame_sequence[0]
-    corners = FrameCorners(
-        np.array([0]),
-        np.array([[0, 0]]),
-        np.array([55])
-    )
-    builder.set_corners_at_frame(0, corners)
-    for frame, image_1 in enumerate(frame_sequence[1:], 1):
+
+    MAX_CORNERS = 1000
+    QUALITY_LEVEL = 0.005
+    MIN_DIST = 10
+    SHI_PARAMS = dict(blockSize=3,
+                      gradientSize=3,
+                      useHarrisDetector=False,
+                      k=0.04)
+
+    LK_PARAMS = dict(winSize=(15, 15),
+                     maxLevel=2,
+                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
+                     minEigThreshold=0.001)
+
+    last_id = 0
+    prev_corners = None
+
+    for frame, image_1 in enumerate(frame_sequence):
+        detected = cv2.goodFeaturesToTrack(image_1, MAX_CORNERS, QUALITY_LEVEL, MIN_DIST, None, **SHI_PARAMS)
+        detected = detected.reshape(-1, 2)
+        if frame == 0:
+            corners = FrameCorners(
+                np.arange(len(detected)),
+                detected,
+                np.array([10] * len(detected))
+            )
+            last_id = len(detected)
+        else:
+            points_1, st, _ = cv2.calcOpticalFlowPyrLK(_float2uint8(image_0), _float2uint8(image_1),
+                                                       prev_corners.points, None, **LK_PARAMS)
+            st = st.reshape(-1)
+            good_new = points_1[st == 1]
+            ids = prev_corners.ids[st == 1]
+
+            # Now, let's add new points
+            dists = cdist(detected, good_new).min(axis=1)
+            points2add = MAX_CORNERS - len(good_new)
+            extra_indices = np.argsort(dists)[-points2add:]
+
+            corners = FrameCorners(
+                np.concatenate([ids.reshape(-1), last_id + np.arange(points2add)]),
+                np.concatenate([good_new, detected[extra_indices]]),
+                np.array([10] * (len(good_new) + points2add))
+            )
+
+            last_id += points2add
+
         builder.set_corners_at_frame(frame, corners)
+
+        prev_corners = corners
         image_0 = image_1
 
 
