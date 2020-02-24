@@ -7,15 +7,14 @@ __all__ = [
 from collections import namedtuple
 from typing import List, Tuple
 
-import numpy as np
 import cv2
-from transforms3d import quaternions
-from OpenGL import GL
-from OpenGL.GL import shaders
-from OpenGL import GLUT
-from OpenGL.arrays import vbo
-
 import data3d
+import numpy as np
+from OpenGL import GL
+from OpenGL import GLUT
+from OpenGL.GL import shaders
+from OpenGL.arrays import vbo
+from transforms3d import quaternions
 
 
 def _transform_track(track, point_cloud):
@@ -178,11 +177,11 @@ def _build_view_matrix(camera_pos, camera_rot_mat):
 def _build_shaders():
     point_cloud_vertex_shader = shaders.compileShader(
         """
-        #version 140
+        #version 120
         uniform mat4 mvp;
 
-        in vec3 position;
-        in vec3 color;
+        attribute vec3 position;
+        attribute vec3 color;
 
         varying vec3 f_color;
 
@@ -196,22 +195,20 @@ def _build_shaders():
     )
     color_interpolating_fragment_shader = shaders.compileShader(
         """
-        #version 140
+        #version 120
         varying vec3 f_color;
 
-        out vec3 out_color;
-
         void main() {
-            out_color = f_color;
+            gl_FragColor = vec4(f_color, 1.0);
         }""",
         GL.GL_FRAGMENT_SHADER
     )
 
     line_vertex_shader = shaders.compileShader(
         """
-        #version 140
+        #version 120
         uniform mat4 mvp;
-        in vec3 position;
+        attribute vec3 position;
 
         void main() {
             gl_Position = mvp * vec4(position, 1);
@@ -220,7 +217,7 @@ def _build_shaders():
     )
     line_fragment_shader = shaders.compileShader(
         """
-        #version 140
+        #version 120
         uniform vec3 color;
 
         void main() {
@@ -231,13 +228,13 @@ def _build_shaders():
 
     camera_vertex_shader = shaders.compileShader(
         """
-        #version 140
+        #version 120
         uniform mat4 mvp;
         uniform mat3 normal_transformation;
 
-        in vec3 position;
-        in vec3 normal;
-        in vec2 uv;
+        attribute vec3 position;
+        attribute vec3 normal;
+        attribute vec2 uv;
 
         varying vec3 f_normal;
         varying vec2 f_uv;
@@ -251,7 +248,7 @@ def _build_shaders():
     )
     camera_fragment_shader = shaders.compileShader(
         """
-        #version 140
+        #version 120
         uniform sampler2D tex;
         uniform sampler2D screen_tex;
 
@@ -270,8 +267,8 @@ def _build_shaders():
             screen_uv[0] /= screen_uvs_w;
             screen_uv[1] /= screen_uvs_h;
 
-            vec3 texture_color = texture(tex, f_uv).rgb;
-            vec3 screen_texture_color = texture(screen_tex, screen_uv).rgb;
+            vec3 texture_color = texture2D(tex, f_uv).rgb;
+            vec3 screen_texture_color = texture2D(screen_tex, screen_uv).rgb;
             vec3 color;
             if (screen_uv[0] >= -0. && screen_uv[0] <= 1. &&
                 screen_uv[1] >= -0. && screen_uv[1] <= 1.) {
