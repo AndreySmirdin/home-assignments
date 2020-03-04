@@ -4,6 +4,7 @@ __all__ = [
     'track_and_calc_colors'
 ]
 
+from collections import defaultdict
 from typing import List, Optional, Tuple
 
 import cv2
@@ -20,15 +21,44 @@ from _camtrack import (
     view_mat3x4_to_pose,
     triangulate_correspondences,
     TriangulationParameters,
-
 )
 from corners import CornerStorage
 from data3d import CameraParameters, PointCloud, Pose
 
-MAX_REPRODUCTION_ERROR = 1.
+MAX_REPRODUCTION_ERROR = 1.0
 MIN_DEPTH = 0.1
-MIN_ANGLE_FIRST_ITERATION = 0.
-MIN_ANGLE_NEXT_ITERATIONS = 1.
+MIN_ANGLE = 1.
+
+
+def try_frame_tracking(frame: int,
+                       corner_storage: CornerStorage,
+                       intrinsic_mat: np.ndarray,
+                       point_cloud_builder) -> Optional[np.ndarray]:
+    intersection = np.zeros(point_cloud_builder.ids.shape[0], dtype='bool')
+    for j in range(len(intersection)):
+        if point_cloud_builder.ids[j] in corner_storage[frame].ids:
+            intersection[j] = True
+
+    points2d = []
+    for ind, pt in zip(corner_storage[frame].ids, corner_storage[frame].points):
+        if ind in point_cloud_builder.ids:
+            points2d.append(pt)
+
+    points2d = np.array(points2d)
+
+    if points2d.shape[0] < 6:
+        return None
+
+    # In case cv2 throws us any strange exceptions.
+    try:
+        res, rvec, tvec, inliers = cv2.solvePnPRansac(point_cloud_builder.points[intersection], points2d, intrinsic_mat,
+                                                      distCoeffs=None)
+        if res:
+            print(f'Solved frame {frame}, found {len(inliers)} inliers.')
+            return rodrigues_and_translation_to_view_mat3x4(rvec, tvec)
+        return None
+    except:
+        return None
 
 
 def track_and_calc_colors(camera_parameters: CameraParameters,
@@ -48,57 +78,54 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     correspondences = build_correspondences(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]])
     triangulation_parameters = TriangulationParameters(max_reprojection_error=MAX_REPRODUCTION_ERROR,
-                                                       min_triangulation_angle_deg=MIN_ANGLE_FIRST_ITERATION,
+                                                       min_triangulation_angle_deg=MIN_ANGLE,
                                                        min_depth=MIN_DEPTH)
+
     points3d, common_points, _ = triangulate_correspondences(correspondences,
                                                              pose_to_view_mat3x4(known_view_1[1]),
                                                              pose_to_view_mat3x4(known_view_2[1]),
                                                              intrinsic_mat,
                                                              triangulation_parameters)
 
-    view_mats, point_cloud_builder = [], PointCloudBuilder()
+    view_mats, point_cloud_builder = [None] * len(rgb_sequence), PointCloudBuilder()
     point_cloud_builder.add_points(common_points, points3d)
 
-    triangulation_parameters = TriangulationParameters(max_reprojection_error=MAX_REPRODUCTION_ERROR,
-                                                       min_triangulation_angle_deg=MIN_ANGLE_NEXT_ITERATIONS,
-                                                       min_depth=MIN_DEPTH)
+    progress = True
+    stats = defaultdict(int)
+    epoch = 0
 
-    for i in range(len(rgb_sequence)):
-        intersection = np.zeros_like(common_points, dtype='bool')
-        for j in range(len(intersection)):
-            if common_points[j] in corner_storage[i].ids:
-                intersection[j] = True
+    while progress:
+        epoch += 1
+        progress = False
+        for i in range(len(rgb_sequence)):
+            if view_mats[i] is None:
+                res = try_frame_tracking(i, corner_storage, intrinsic_mat, point_cloud_builder)
+                if res is not None:
+                    progress = True
+                    view_mats[i] = res
+                    stats[epoch] += 1
 
-        points2d = []
-        for ind, pt in zip(corner_storage[i].ids, corner_storage[i].points):
-            if ind in common_points:
-                points2d.append(pt)
+            new_points = 0
+            for j in range(i):
+                correspondences = build_correspondences(corner_storage[j], corner_storage[i],
+                                                        ids_to_remove=point_cloud_builder.ids)
+                if not len(correspondences.ids) or view_mats[i] is None or view_mats[j] is None:
+                    continue
+                extra_points3d, extra_common_points, _ = triangulate_correspondences(correspondences,
+                                                                                     view_mats[j],
+                                                                                     view_mats[i],
+                                                                                     intrinsic_mat,
+                                                                                     triangulation_parameters)
 
-        points2d = np.array(points2d)
+                new_points += len(extra_common_points)
+                point_cloud_builder.add_points(extra_common_points, extra_points3d)
 
-        res, rvec, tvec, inliers = cv2.solvePnPRansac(points3d[intersection], points2d, intrinsic_mat, distCoeffs=None)
-        assert res, f"Something bad has happened at frame {i}, please have a look."
-        view_mats.append(rodrigues_and_translation_to_view_mat3x4(rvec, tvec))
+    unsuccessful_frames = list(map(lambda x: x[0], filter(lambda x: x[1] is None, enumerate(view_mats))))
+    if unsuccessful_frames:
+        raise RuntimeError(f"Could not find views for {len(unsuccessful_frames)}: {unsuccessful_frames}")
 
-        new_points = 0
-        for j in range(i):
-            correspondences = build_correspondences(corner_storage[j], corner_storage[i],
-                                                    ids_to_remove=point_cloud_builder.ids)
-            if not len(correspondences.ids):
-                continue
-            extra_points3d, extra_common_points, _ = triangulate_correspondences(correspondences,
-                                                                                 view_mats[j],
-                                                                                 view_mats[i],
-                                                                                 intrinsic_mat,
-                                                                                 triangulation_parameters)
-            common_points = np.concatenate([common_points, extra_common_points])
-            points3d = np.concatenate([points3d, extra_points3d])
-
-            new_points += len(extra_common_points)
-            point_cloud_builder.add_points(extra_common_points, extra_points3d)
-            assert len(common_points) == len(np.unique(common_points))
-
-        print(f'Added {new_points} new points during frame {i}, position found with {len(inliers)} inliers.')
+    for epoch, cnt in stats.items():
+        print(f'Made {cnt} frames during epoch {epoch}')
 
     calc_point_cloud_colors(
         point_cloud_builder,
