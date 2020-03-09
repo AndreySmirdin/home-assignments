@@ -25,9 +25,9 @@ from _camtrack import (
 from corners import CornerStorage
 from data3d import CameraParameters, PointCloud, Pose
 
-MAX_REPRODUCTION_ERROR = 1.0
+MAX_REPRODUCTION_ERROR = 3
 MIN_DEPTH = 0.1
-MIN_ANGLE = 1.
+MIN_ANGLE = 6
 
 
 def try_frame_tracking(frame: int,
@@ -61,31 +61,58 @@ def try_frame_tracking(frame: int,
         return None
 
 
+def do_initialization(corner_storage: CornerStorage,
+                      intrinsic_mat: np.ndarray,
+                      triangulation_parameters: TriangulationParameters):
+    results = []
+    for frame in range(1, len(corner_storage)):
+        correspondences = build_correspondences(corner_storage[0], corner_storage[frame])
+        if not len(correspondences[0]):
+            continue
+
+        E, mask = cv2.findEssentialMat(correspondences.points_1, correspondences.points_2, cameraMatrix=intrinsic_mat)
+        R1, R2, T = cv2.decomposeEssentialMat(E)
+
+        for R in [R1, R2]:
+            try:
+                results.append(triangulate_correspondences(correspondences,
+                                                           np.eye(3, 4),
+                                                           np.hstack([R, T]),
+                                                           intrinsic_mat,
+                                                           triangulation_parameters))
+            except:
+                pass
+
+    # Return result with maximum number of points.
+    return max(results, key=lambda x: len(x[0]))
+
+
 def track_and_calc_colors(camera_parameters: CameraParameters,
                           corner_storage: CornerStorage,
                           frame_sequence_path: str,
                           known_view_1: Optional[Tuple[int, Pose]] = None,
                           known_view_2: Optional[Tuple[int, Pose]] = None) \
         -> Tuple[List[Pose], PointCloud]:
-    if known_view_1 is None or known_view_2 is None:
-        raise NotImplementedError()
-
     rgb_sequence = frameseq.read_rgb_f32(frame_sequence_path)
     intrinsic_mat = to_opencv_camera_mat3x3(
         camera_parameters,
         rgb_sequence[0].shape[0]
     )
-
-    correspondences = build_correspondences(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]])
     triangulation_parameters = TriangulationParameters(max_reprojection_error=MAX_REPRODUCTION_ERROR,
                                                        min_triangulation_angle_deg=MIN_ANGLE,
                                                        min_depth=MIN_DEPTH)
 
-    points3d, common_points, _ = triangulate_correspondences(correspondences,
-                                                             pose_to_view_mat3x4(known_view_1[1]),
-                                                             pose_to_view_mat3x4(known_view_2[1]),
-                                                             intrinsic_mat,
-                                                             triangulation_parameters)
+    if known_view_1 is None or known_view_2 is None:
+        points3d, common_points, _ = do_initialization(corner_storage, intrinsic_mat, triangulation_parameters)
+        print(f'Initialized with {len(points3d)} points.')
+    else:
+
+        correspondences = build_correspondences(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]])
+        points3d, common_points, _ = triangulate_correspondences(correspondences,
+                                                                 pose_to_view_mat3x4(known_view_1[1]),
+                                                                 pose_to_view_mat3x4(known_view_2[1]),
+                                                                 intrinsic_mat,
+                                                                 triangulation_parameters)
 
     view_mats, point_cloud_builder = [None] * len(rgb_sequence), PointCloudBuilder()
     point_cloud_builder.add_points(common_points, points3d)
