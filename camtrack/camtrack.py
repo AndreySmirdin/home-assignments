@@ -26,8 +26,12 @@ from corners import CornerStorage
 from data3d import CameraParameters, PointCloud, Pose
 
 MAX_REPRODUCTION_ERROR = 3
+MAX_REPRODUCTION_ERROR_GIVEN_FRAMES = 1
+
 MIN_DEPTH = 0.1
-MIN_ANGLE = 6
+
+MIN_ANGLE = 7.5
+MIN_ANGLE_GIVEN_FRAMES = 1
 
 
 def try_frame_tracking(frame: int,
@@ -98,15 +102,17 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         camera_parameters,
         rgb_sequence[0].shape[0]
     )
-    triangulation_parameters = TriangulationParameters(max_reprojection_error=MAX_REPRODUCTION_ERROR,
-                                                       min_triangulation_angle_deg=MIN_ANGLE,
-                                                       min_depth=MIN_DEPTH)
 
     if known_view_1 is None or known_view_2 is None:
+        triangulation_parameters = TriangulationParameters(max_reprojection_error=MAX_REPRODUCTION_ERROR,
+                                                           min_triangulation_angle_deg=MIN_ANGLE,
+                                                           min_depth=MIN_DEPTH)
         points3d, common_points, _ = do_initialization(corner_storage, intrinsic_mat, triangulation_parameters)
         print(f'Initialized with {len(points3d)} points.')
     else:
-
+        triangulation_parameters = TriangulationParameters(max_reprojection_error=MAX_REPRODUCTION_ERROR_GIVEN_FRAMES,
+                                                           min_triangulation_angle_deg=MIN_ANGLE_GIVEN_FRAMES,
+                                                           min_depth=MIN_DEPTH)
         correspondences = build_correspondences(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]])
         points3d, common_points, _ = triangulate_correspondences(correspondences,
                                                                  pose_to_view_mat3x4(known_view_1[1]),

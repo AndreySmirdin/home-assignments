@@ -16,7 +16,7 @@ import numpy as np
 import pims
 
 from _corners import FrameCorners, CornerStorage, StorageImpl
-from _corners import dump, load, draw, without_short_tracks, create_cli
+from _corners import create_cli
 from scipy.spatial.distance import cdist
 
 
@@ -78,7 +78,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
             # Now, let's add new points
             dists = cdist(detected, good_new).min(axis=1)
-            points2add = MAX_CORNERS - len(good_new)
+            points2add = min(MAX_CORNERS - len(good_new), len(detected))
             extra_indices = np.argsort(dists)[-points2add:]
 
             corners = FrameCorners(
