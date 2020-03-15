@@ -24,18 +24,18 @@ from typing import List, Tuple
 
 import click
 import cv2
+import frameseq
 import numpy as np
 import pims
-from sklearn.preprocessing import normalize
 import sortednp as snp
-
-import frameseq
-from corners import CornerStorage, FrameCorners, build, load
+from _corners import load
+from corners import CornerStorage, FrameCorners, build
 from data3d import (
     CameraParameters, PointCloud, Pose,
     read_camera_parameters, read_poses,
     write_point_cloud, write_poses
 )
+from sklearn.preprocessing import normalize
 
 
 def to_opencv_camera_mat3x3(camera_parameters: CameraParameters,

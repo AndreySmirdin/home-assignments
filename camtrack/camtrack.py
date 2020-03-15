@@ -75,17 +75,15 @@ def do_initialization(corner_storage: CornerStorage,
             continue
 
         E, mask = cv2.findEssentialMat(correspondences.points_1, correspondences.points_2, cameraMatrix=intrinsic_mat)
-        R1, R2, T = cv2.decomposeEssentialMat(E)
-
-        for R in [R1, R2]:
-            try:
-                results.append(triangulate_correspondences(correspondences,
-                                                           np.eye(3, 4),
-                                                           np.hstack([R, T]),
-                                                           intrinsic_mat,
-                                                           triangulation_parameters))
-            except:
-                pass
+        _, R, T, mask = cv2.recoverPose(E, correspondences.points_1, correspondences.points_2, intrinsic_mat)
+        try:
+            results.append(triangulate_correspondences(correspondences,
+                                                       np.eye(3, 4),
+                                                       np.hstack([R, T]),
+                                                       intrinsic_mat,
+                                                       triangulation_parameters))
+        except:
+            pass
 
     # Return result with maximum number of points.
     return max(results, key=lambda x: len(x[0]))

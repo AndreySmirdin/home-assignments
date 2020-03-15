@@ -1,5 +1,5 @@
 dir=bike_translation_slow
-echo "Testing dir"
+echo "Testing $dir"
 echo "Expect rotation median <2"
 echo "Translate median <0.1"
 echo ""
